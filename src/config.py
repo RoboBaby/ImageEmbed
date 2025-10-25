@@ -9,6 +9,7 @@ class Config:
 
     # Qdrant settings
     QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:6333")
+    QDRANT_API_KEY: Optional[str] = os.getenv("QDRANT_API_KEY")
     QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "frames_v1")
     USE_QDRANT_MULTIVECTOR: bool = os.getenv("USE_QDRANT_MULTIVECTOR", "true").lower() in (
         "true",

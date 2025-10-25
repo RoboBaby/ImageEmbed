@@ -127,7 +127,10 @@ async def startup_event():
 
     # Initialize Qdrant client
     logger.info(f"Connecting to Qdrant at {Config.QDRANT_URL}")
-    qdrant_client = QdrantClient(url=Config.QDRANT_URL)
+    qdrant_client = QdrantClient(
+        url=Config.QDRANT_URL,
+        api_key=Config.QDRANT_API_KEY,
+    )
 
     # Initialize embedder
     logger.info(

@@ -32,7 +32,10 @@ def main():
 
     # Connect to Qdrant
     try:
-        client = QdrantClient(url=Config.QDRANT_URL)
+        client = QdrantClient(
+            url=Config.QDRANT_URL,
+            api_key=Config.QDRANT_API_KEY,
+        )
         logger.info("Connected to Qdrant")
     except Exception as e:
         logger.error(f"Failed to connect to Qdrant: {e}")
