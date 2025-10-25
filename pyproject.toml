@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "askgvt-visual-ingest"
+version = "0.1.0"
+description = "S3 image ingestion service with OpenCLIP embeddings and Qdrant storage"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "boto3>=1.28.0",
+    "open-clip-torch>=2.20.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "Pillow>=10.0.0",
+    "numpy>=1.24.0",
+    "qdrant-client>=1.7.0",
+    "requests>=2.31.0",
+    "httpx>=0.25.0",
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "moto[s3]>=4.2.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
