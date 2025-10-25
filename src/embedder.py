@@ -13,9 +13,12 @@ from src.patcher import crop_patch, subsample_patches
 
 class OpenCLIPEmbedder:
     """
-    OpenCLIP model wrapper for generating L2-normalized image embeddings.
+    OpenCLIP model wrapper for generating L2-normalized embeddings.
 
-    Supports both global image embeddings and batch patch embeddings.
+    Supports:
+    - Global image embeddings
+    - Batch patch embeddings
+    - Text embeddings (for text-image hybrid search)
     """
 
     def __init__(
@@ -163,6 +166,55 @@ class OpenCLIPEmbedder:
         }
 
         return embeddings, metadata
+
+    def embed_text(self, text: str) -> np.ndarray:
+        """
+        Generate L2-normalized embedding for a text query.
+
+        Args:
+            text: Text string
+
+        Returns:
+            Numpy array of shape [D] with L2-normalized embedding (float32)
+        """
+        result = self.embed_texts([text])
+        return result[0]
+
+    def embed_texts(self, texts: List[str]) -> np.ndarray:
+        """
+        Generate L2-normalized embeddings for a batch of text queries.
+
+        Args:
+            texts: List of text strings
+
+        Returns:
+            Numpy array of shape [N, D] with L2-normalized embeddings (float32)
+        """
+        if not texts:
+            return np.array([], dtype=np.float32).reshape(0, self.model.visual.output_dim)
+
+        batch_size = Config.BATCH_SIZE
+        all_features = []
+
+        with torch.inference_mode():
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+
+                # Tokenize
+                text_tokens = self.tokenizer(batch).to(self.device)
+
+                # Encode
+                features = self.model.encode_text(text_tokens)
+
+                # L2 normalize
+                features = features / features.norm(dim=-1, keepdim=True)
+
+                # Move to CPU and convert to numpy
+                all_features.append(features.cpu().numpy())
+
+        # Concatenate all batches
+        result = np.concatenate(all_features, axis=0).astype(np.float32)
+        return result
 
     def get_embedding_dim(self) -> int:
         """Get the dimensionality of embeddings."""

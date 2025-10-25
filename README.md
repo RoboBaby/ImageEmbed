@@ -1,23 +1,37 @@
-# Visual Ingest Service
+# Visual Search & Ingest Service
 
-Production-ready HTTP service for ingesting images from S3 into Qdrant with OpenCLIP embeddings.
+Production-ready HTTP service for ingesting and searching images from S3 using OpenCLIP embeddings with patch-level reranking.
 
 ## Features
 
-**What this service does:**
+### Phase 2 - Full Search & Retrieval
+
+**Ingestion:**
 - Fetches images from S3 (supports both `s3://` URLs and HTTPS pre-signed URLs)
 - Generates OpenCLIP embeddings:
   - **Global embedding** per image
   - **Patch embeddings** via advanced sliding-window with overlap, context padding, and optional multi-scale
 - Stores vectors in Qdrant with multivector support (or fallback mode)
-- Provides HTTP APIs for single and batch ingestion
-- Production-ready with comprehensive error handling, logging, and monitoring
+- Synchronous and **asynchronous batch ingestion** with job tracking
 
-**What this service does NOT do (Phase 1):**
-- No search/retrieval endpoints (storage only)
-- No text embeddings or hybrid fusion
-- No object detection (GroundingDINO/SAM)
-- No async/background queues
+**Search & Retrieval:**
+- **Text-to-image search** using OpenCLIP text encoder
+- **Image-to-image search** (by S3 URL or file upload)
+- **Patch-level MaxSim reranking** for improved accuracy
+- **Hybrid text-image search** with configurable score fusion
+- Advanced filtering (by video_id, frame_id ranges, timestamps)
+- Real-time search with detailed score breakdowns
+
+**Production Ready:**
+- Comprehensive error handling and logging
+- Health checks and monitoring
+- Background job queue with status tracking
+- Structured timing metrics
+
+**Not included (future):**
+- Object detection (GroundingDINO/SAM)
+- Quantization/compression
+- Distributed processing
 
 ## Architecture
 
@@ -240,6 +254,193 @@ Batch ingest multiple frames.
 }
 ```
 
+### `POST /ingest/frames/async`
+
+Asynchronous batch ingestion (non-blocking).
+
+**Request:**
+```json
+{
+  "items": [
+    {"s3_url": "s3://bucket/a.jpg", "video_id": 1, "frame_id": 101},
+    {"s3_url": "s3://bucket/b.jpg", "video_id": 1, "frame_id": 102}
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "job_id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+  "status": "pending",
+  "total_items": 2,
+  "message": "Job started. Use GET /jobs/{job_id} to check status."
+}
+```
+
+### `GET /jobs/{job_id}`
+
+Check status of async ingestion job.
+
+**Response:**
+```json
+{
+  "job_id": "a1b2c3d4-...",
+  "status": "completed",
+  "total_items": 2,
+  "processed_items": 2,
+  "successful_items": 2,
+  "failed_items": 0,
+  "results": [...],
+  "duration_seconds": 5.2
+}
+```
+
+### `GET /jobs`
+
+List recent jobs (with optional status filter).
+
+**Query params:** `limit` (int), `status` (pending|running|completed|failed)
+
+## Search & Retrieval Endpoints
+
+### `POST /search/text`
+
+Search by text query using OpenCLIP text encoder.
+
+**Request:**
+```json
+{
+  "query": "a person riding a bicycle",
+  "top_k": 10,
+  "video_ids": [1, 2],
+  "frame_id_min": 100,
+  "frame_id_max": 500
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "image_id": "1:234",
+      "video_id": 1,
+      "frame_id": 234,
+      "score": 0.87,
+      "s3_url": "s3://bucket/frame.jpg",
+      "width": 1920,
+      "height": 1080
+    }
+  ],
+  "total": 10,
+  "query_type": "text",
+  "duration_ms": 42.3
+}
+```
+
+### `POST /search/image`
+
+Search by image (via S3 URL) with optional MaxSim reranking.
+
+**Request:**
+```json
+{
+  "s3_url": "s3://bucket/query.jpg",
+  "top_k": 10,
+  "rerank": true,
+  "rerank_alpha": 0.5,
+  "video_ids": [1]
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "image_id": "1:456",
+      "video_id": 1,
+      "frame_id": 456,
+      "score": 0.92,
+      "global_score": 0.85,
+      "maxsim_score": 0.94,
+      "s3_url": "s3://bucket/match.jpg",
+      "width": 1920,
+      "height": 1080
+    }
+  ],
+  "total": 10,
+  "query_type": "image",
+  "rerank_enabled": true,
+  "duration_ms": 156.7
+}
+```
+
+**Reranking parameters:**
+- `rerank` (bool): Enable patch-level MaxSim reranking
+- `rerank_alpha` (float 0-1): Weight for global vs patch scores
+  - `1.0` = global only (fast, less accurate)
+  - `0.5` = balanced (default)
+  - `0.0` = patches only (slow, more accurate)
+
+### `POST /search/image/upload`
+
+Search by uploaded image file.
+
+**Form data:**
+- `file`: Image file (multipart/form-data)
+- `top_k`: Number of results (query param)
+- `rerank`: Enable reranking (query param)
+- `rerank_alpha`: Reranking weight (query param)
+
+**Example:**
+```bash
+curl -X POST http://localhost:8000/search/image/upload \
+  -F "file=@query.jpg" \
+  -F "top_k=5" \
+  -F "rerank=true"
+```
+
+### `POST /search/hybrid`
+
+Hybrid text-image search with score fusion.
+
+**Request:**
+```json
+{
+  "text_query": "a red car",
+  "image_s3_url": "s3://bucket/reference.jpg",
+  "text_weight": 0.6,
+  "image_weight": 0.4,
+  "top_k": 10,
+  "rerank": false
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "image_id": "1:789",
+      "score": 0.88,
+      "global_score": 0.82,
+      "maxsim_score": 0.91,
+      ...
+    }
+  ],
+  "total": 10,
+  "query_type": "hybrid",
+  "duration_ms": 89.4
+}
+```
+
+**Fusion formula:**
+```
+final_score = text_weight * text_score + image_weight * image_score
+```
+
 ## Usage Examples
 
 ### Using curl
@@ -297,6 +498,122 @@ curl -X POST http://localhost:8000/ingest/frame \
     "video_id": 123,
     "frame_id": 456
   }'
+```
+
+### Search Examples
+
+```bash
+# Text search
+curl -X POST http://localhost:8000/search/text \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "a person running",
+    "top_k": 5,
+    "video_ids": [1, 2]
+  }'
+
+# Image search (with reranking)
+curl -X POST http://localhost:8000/search/image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "s3_url": "s3://bucket/query.jpg",
+    "top_k": 10,
+    "rerank": true,
+    "rerank_alpha": 0.3
+  }'
+
+# Image upload search
+curl -X POST http://localhost:8000/search/image/upload \
+  -F "file=@query.jpg" \
+  -F "top_k=5" \
+  -F "rerank=true"
+
+# Hybrid search
+curl -X POST http://localhost:8000/search/hybrid \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text_query": "red car on highway",
+    "image_s3_url": "s3://bucket/reference.jpg",
+    "text_weight": 0.6,
+    "image_weight": 0.4,
+    "top_k": 10
+  }'
+
+# Async batch ingestion
+curl -X POST http://localhost:8000/ingest/frames/async \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      {"s3_url": "s3://bucket/1.jpg", "video_id": 1, "frame_id": 1},
+      {"s3_url": "s3://bucket/2.jpg", "video_id": 1, "frame_id": 2}
+    ]
+  }'
+
+# Check job status
+curl http://localhost:8000/jobs/{job_id}
+
+# List all jobs
+curl http://localhost:8000/jobs?limit=20&status=completed
+```
+
+### Python Search Examples
+
+```python
+import httpx
+
+# Text search
+response = httpx.post(
+    "http://localhost:8000/search/text",
+    json={
+        "query": "a sunset over mountains",
+        "top_k": 5,
+    },
+    timeout=30.0,
+)
+results = response.json()
+for r in results["results"]:
+    print(f"{r['image_id']}: score={r['score']:.3f}")
+
+# Image search with reranking
+response = httpx.post(
+    "http://localhost:8000/search/image",
+    json={
+        "s3_url": "s3://bucket/query.jpg",
+        "top_k": 10,
+        "rerank": True,
+        "rerank_alpha": 0.5,
+    },
+    timeout=60.0,
+)
+results = response.json()
+for r in results["results"]:
+    print(f"{r['image_id']}: final={r['score']:.3f}, "
+          f"global={r['global_score']:.3f}, maxsim={r['maxsim_score']:.3f}")
+
+# Async batch with polling
+import time
+
+# Start job
+response = httpx.post(
+    "http://localhost:8000/ingest/frames/async",
+    json={"items": items},
+    timeout=10.0,
+)
+job_id = response.json()["job_id"]
+
+# Poll status
+while True:
+    response = httpx.get(f"http://localhost:8000/jobs/{job_id}")
+    status = response.json()
+
+    if status["status"] == "completed":
+        print(f"Completed: {status['successful_items']}/{status['total_items']}")
+        break
+    elif status["status"] == "failed":
+        print(f"Failed: {status['error']}")
+        break
+
+    time.sleep(1)
 ```
 
 ## Testing
@@ -459,21 +776,34 @@ askgvt-visual-ingest/
 │   ├── s3_client.py             # S3 URL parsing and fetching
 │   ├── io_utils.py              # EXIF-safe image I/O
 │   ├── patcher.py               # Sliding-window patch generation
-│   ├── embedder.py              # OpenCLIP wrapper
+│   ├── embedder.py              # OpenCLIP wrapper (image + text)
 │   ├── qdrant_store.py          # Qdrant storage with multivector
+│   ├── reranker.py              # MaxSim patch-level reranking
+│   ├── search.py                # Search logic (text, image, hybrid)
+│   ├── async_jobs.py            # Background job queue
 │   └── service.py               # FastAPI application
 └── tests/
-    └── test_http_ingest.py      # Comprehensive tests with moto
+    ├── test_http_ingest.py      # Ingestion tests with moto
+    └── test_search.py           # Search and reranking tests
 ```
 
-## Contributing
+## Phase 2 Complete
 
-This is Phase 1 (storage only). Future phases may include:
-- Search and retrieval endpoints
-- Reranking with patch-level MaxSim
-- Text-image hybrid search
-- Object detection integration
-- Async batch processing with queues
+**Implemented:**
+✅ Text-to-image search
+✅ Image-to-image search
+✅ Patch-level MaxSim reranking
+✅ Hybrid text-image search
+✅ Async batch processing
+✅ Advanced filtering
+✅ Job tracking
+
+**Future enhancements:**
+- Object detection integration (GroundingDINO/SAM)
+- Distributed processing (Celery/RabbitMQ)
+- Vector quantization/compression
+- Multi-modal reranking models
+- Temporal search across video sequences
 
 ## License
 
